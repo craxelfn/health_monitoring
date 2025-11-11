@@ -5,40 +5,136 @@ services:
     image: confluentinc/cp-zookeeper:7.5.0
     hostname: zookeeper
     container_name: zookeeper
+    ports:
+      - "2181:2181"
     environment:
       ZOOKEEPER_CLIENT_PORT: 2181
       ZOOKEEPER_TICK_TIME: 2000
-    ports:
-      - "2181:2181"
+    networks:
+      - kafka-network
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "zookeeper-shell localhost:2181 ls / >/dev/null 2>&1"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+      start_period: 5s
+
+  zk-clean:
+    image: confluentinc/cp-kafka:7.5.0
+    container_name: zk-clean
+    depends_on:
+      - zookeeper
+    networks:
+      - kafka-network
+    entrypoint: ["/bin/bash", "-lc"]
+    command: |
+      echo "Waiting for ZooKeeper to be ready..." ;
+      for i in {1..60}; do
+        zookeeper-shell zookeeper:2181 ls / >/dev/null 2>&1 && break ;
+        echo "ZooKeeper not ready yet ($i)..." ;
+        sleep 2 ;
+      done ;
+
+      echo "Checking for stale broker registration /brokers/ids/1..." ;
+      if zookeeper-shell zookeeper:2181 exists /brokers/ids/1 2>/dev/null | grep -q true ; then
+        echo "Stale /brokers/ids/1 found. Deleting..." ;
+        zookeeper-shell zookeeper:2181 delete /brokers/ids/1 || true ;
+      else
+        echo "No stale broker node found." ;
+      fi ;
+      echo "ZooKeeper cleanup done."
 
   kafka:
     image: confluentinc/cp-kafka:7.5.0
     hostname: kafka
     container_name: kafka
     depends_on:
-      - zookeeper
+      - zk-clean
     ports:
-      - "9092:9092"   # host access
+      - "9092:9092"
     environment:
       KAFKA_BROKER_ID: 1
       KAFKA_ZOOKEEPER_CONNECT: zookeeper:2181
       KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: PLAINTEXT:PLAINTEXT,PLAINTEXT_HOST:PLAINTEXT
-      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:9092,PLAINTEXT_HOST://localhost:9092
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:29092,PLAINTEXT_HOST://localhost:9092
       KAFKA_INTER_BROKER_LISTENER_NAME: PLAINTEXT
       KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
       KAFKA_AUTO_CREATE_TOPICS_ENABLE: 'false'
+    networks:
+      - kafka-network
+    volumes:
+      - kafka-data:/var/lib/kafka/data
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "kafka-broker-api-versions --bootstrap-server localhost:9092 >/dev/null 2>&1"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+      start_period: 10s
+
+  init-kafka:
+    image: confluentinc/cp-kafka:7.5.0
+    container_name: init-kafka
+    depends_on:
+      kafka:
+        condition: service_healthy
+    networks:
+      - kafka-network
+    entrypoint: ["/bin/bash", "-c"]
+    command: |
+      set -euo pipefail
+      echo "Waiting for Kafka to be ready (API responsive)..." ;
+      for i in {1..120}; do
+        if kafka-topics --bootstrap-server kafka:29092 --list >/dev/null 2>&1 ; then
+          echo "Kafka is responsive after $i checks." ; break ;
+        fi
+        echo "Kafka not responsive yet ($i)..." ;
+        sleep 2 ;
+      done
+
+      create_or_confirm_topic () {
+        local topic="$1"
+        echo "Ensuring topic exists: ${topic}"
+        for j in {1..30}; do
+          if kafka-topics --bootstrap-server kafka:29092 --list | grep -E "^${topic}$" >/dev/null 2>&1 ; then
+            echo "Topic ${topic} exists." ; return 0
+          fi
+          echo "Topic ${topic} not found, creating (attempt ${j})..."
+          kafka-topics --create --if-not-exists \
+            --topic "${topic}" \
+            --bootstrap-server kafka:29092 \
+            --replication-factor 1 \
+            --partitions 4 || true
+          sleep 2
+        done
+        echo "ERROR: Failed to confirm creation of topic ${topic}" ; return 1
+      }
+
+      for t in sensor_raw processed_data anomaly_alert; do
+        create_or_confirm_topic "${t}"
+      done
+
+      echo "Listing all topics:" ;
+      kafka-topics --list --bootstrap-server kafka:29092 ;
+      echo "Topics created successfully!"
+    restart: "on-failure:3"
 
   kafka-ui:
     image: provectuslabs/kafka-ui:latest
     container_name: kafka-ui
     depends_on:
       - kafka
+      - init-kafka
     ports:
-      - "18080:8080"   # host port 18080
+      - "18080:8080"
     environment:
+      DYNAMIC_CONFIG_ENABLED: 'true'
       KAFKA_CLUSTERS_0_NAME: local
-      KAFKA_CLUSTERS_0_BOOTSTRAPSERVERS: kafka:9092  # internal Docker network
+      KAFKA_CLUSTERS_0_BOOTSTRAPSERVERS: kafka:29092
       KAFKA_CLUSTERS_0_ZOOKEEPER: zookeeper:2181
+    networks:
+      - kafka-network
 
   simulator:
     build:
@@ -47,8 +143,22 @@ services:
     container_name: sensor-simulator
     depends_on:
       - kafka
+      - init-kafka
     environment:
-      KAFKA_BOOTSTRAP_SERVERS: kafka:9092   # internal network
+      KAFKA_BOOTSTRAP_SERVERS: kafka:29092
       CSV_FILE: /data/human_vital_signs_dataset_2024.csv
+      KAFKA_TOPIC_RAW: sensor_raw
+      KAFKA_TOPIC_PROCESSED: processed_data
+      KAFKA_TOPIC_ANOMALY: anomaly_alert
     volumes:
       - ./simulator/data:/data
+    networks:
+      - kafka-network
+    restart: unless-stopped
+
+networks:
+  kafka-network:
+    driver: bridge
+
+volumes:
+  kafka-data:
