@@ -7,12 +7,10 @@ from typing import List, Dict
 import pandas as pd
 from confluent_kafka import Producer, KafkaException
 
-# --- CONFIG ---
 KAFKA_BOOTSTRAP = os.environ.get("KAFKA_BOOTSTRAP_SERVERS", "localhost:9092")
 CSV_FILE = os.environ.get("CSV_FILE", "./data/human_vital_signs_dataset_2024.csv")
 TOPIC = "sensor_raw"
 
-# --- STATIC PATIENT METADATA ---
 patients_info: List[Dict] = [
     {"Patient ID": 1, "Age": 37, "Gender_Male": 0, "Weight (kg)": 91.5, "Height (m)": 1.68},
     {"Patient ID": 2, "Age": 77, "Gender_Male": 1, "Weight (kg)": 50.7, "Height (m)": 1.99},
@@ -36,7 +34,6 @@ def wait_for_kafka(bootstrap_servers: str, poll_seconds: int = 2) -> None:
     while True:
         try:
             producer = Producer({"bootstrap.servers": bootstrap_servers})
-            # Try retrieving cluster metadata to confirm broker is reachable
             producer.list_topics(timeout=5)
             return
         except KafkaException as e:
@@ -46,24 +43,19 @@ def wait_for_kafka(bootstrap_servers: str, poll_seconds: int = 2) -> None:
             print(f"Waiting for Kafka ({e}), retrying in {poll_seconds}s...")
             time.sleep(poll_seconds)
 
-# --- READ SENSOR DATA (wait until available) ---
 wait_for_csv(CSV_FILE)
 df = pd.read_csv(CSV_FILE)
 
-# --- WAIT FOR KAFKA AVAILABILITY ---
 wait_for_kafka(KAFKA_BOOTSTRAP)
 
-# --- KAFKA PRODUCER FUNCTION ---
 def produce_patient(patient):
     patient_id = patient["Patient ID"]
 
-    # Filter CSV data for that patient if exists
     patient_df = df[df["Patient ID"] == patient_id]
     if patient_df.empty:
         print(f"No CSV data for patient {patient_id}, skipping...")
         return
 
-    # Create one producer per thread
     producer = Producer({
         "bootstrap.servers": KAFKA_BOOTSTRAP,
         "acks": "all",
@@ -72,7 +64,6 @@ def produce_patient(patient):
         "linger.ms": 10
     })
 
-    # Continuously stream the dataset in a loop so the container stays alive
     while True:
         for _, row in patient_df.iterrows():
             message = {
@@ -95,11 +86,9 @@ def produce_patient(patient):
 
             try:
                 producer.produce(TOPIC, key=str(patient_id), value=json.dumps(message))
-                # Poll to serve delivery callbacks and progress internal queue
                 producer.poll(0)
                 print(f"Sent for patient {patient_id} at {row['Timestamp']}")
             except BufferError as e:
-                # Local queue full, wait and retry
                 print(f"Producer buffer full ({e}), sleeping and retrying...")
                 time.sleep(0.5)
                 continue
@@ -112,22 +101,18 @@ def produce_patient(patient):
                 time.sleep(1)
                 continue
 
-            # Simulate real-time frequency
             time.sleep(1)
 
-        # Ensure all messages in the loop are flushed before restarting the loop
         try:
             producer.flush(timeout=10)
         except Exception as e:
             print(f"Flush error (ignored): {e}")
 
-# --- RUN 4 PATIENTS IN PARALLEL ---
 threads: List[threading.Thread] = []
 for patient in patients_info:
     t = threading.Thread(target=produce_patient, args=(patient,), daemon=True)
     t.start()
     threads.append(t)
 
-# Keep main thread alive indefinitely while worker threads run
 while True:
     time.sleep(60)
