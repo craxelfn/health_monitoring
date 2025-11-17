@@ -1,0 +1,17 @@
+spring:
+  kafka:
+    bootstrap-servers: localhost:9092
+    streams:
+      application-id: health-stream-processor
+      num-threads: 2
+      commit-interval-ms: 1000
+
+kafka:
+  topics:
+    input: sensor_raw
+    output: processed_data
+
+logging:
+  level:
+    com.health.stream: DEBUG
+    org.apache.kafka: INFO
