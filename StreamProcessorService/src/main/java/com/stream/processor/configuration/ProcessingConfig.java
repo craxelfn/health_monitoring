@@ -10,6 +10,7 @@ import com.stream.processor.validation.ValidationRule;
 import com.stream.processor.validation.VitalSignsRangeValidator;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
+import org.springframework.context.annotation.Primary;
 
 import java.util.List;
 
@@ -17,6 +18,7 @@ import java.util.List;
 public class ProcessingConfig {
 
     @Bean
+    @Primary
     public ValidationRule compositeValidator(
             RequiredFieldsValidator requiredFieldsValidator,
             VitalSignsRangeValidator vitalSignsRangeValidator) {
@@ -28,6 +30,7 @@ public class ProcessingConfig {
     }
 
     @Bean
+    @Primary
     public EnrichmentStrategy compositeEnricher(
             HrvEnrichmentStrategy hrvEnricher,
             ActivityLevelEnrichmentStrategy activityLevelEnricher,

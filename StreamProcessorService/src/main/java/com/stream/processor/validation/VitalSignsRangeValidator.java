@@ -1,7 +1,9 @@
 package com.stream.processor.validation;
 
 import com.stream.processor.Model.SensorEvent;
+import org.springframework.stereotype.Component;
 
+@Component
 public class VitalSignsRangeValidator implements ValidationRule  {
 
     private static final double MIN_HEART_RATE = 30.0;

@@ -3,6 +3,7 @@ spring:
     bootstrap-servers: localhost:9092
     streams:
       application-id: health-stream-processor
+      bootstrap-servers: localhost:9092
       num-threads: 2
       commit-interval-ms: 1000
 
