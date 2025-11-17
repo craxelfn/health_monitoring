@@ -85,6 +85,22 @@ services:
       - ./simulator/data:/data
     networks:
       - kafka-network
+
+  stream-processor:
+    build:
+      context: ./StreamProcessorService
+      dockerfile: Dockerfile
+    container_name: stream-processor
+    depends_on:
+      - kafka
+      - kafka-init
+    environment:
+      SPRING_KAFKA_BOOTSTRAP_SERVERS: kafka:9092
+      SPRING_KAFKA_STREAMS_APPLICATION_ID: health-stream-processor
+    ports:
+      - "18081:8080"
+    networks:
+      - kafka-network
       
 networks:
   kafka-network:
