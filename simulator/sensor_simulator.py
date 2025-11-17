@@ -140,7 +140,7 @@ def produce_patient(patient: Dict) -> None:
         "enable.idempotence": True,
         "retries": 5,
         "linger.ms": 10,
-        "compression.type": "snappy"
+        "compression.type": "gzip"
     })
     
     record_count = 0

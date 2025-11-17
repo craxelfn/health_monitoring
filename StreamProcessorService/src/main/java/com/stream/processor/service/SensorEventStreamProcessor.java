@@ -9,6 +9,8 @@ import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Bean;
 import org.springframework.stereotype.Component;
 
+import java.util.Collections;
+
 @Slf4j
 @Component
 @RequiredArgsConstructor
@@ -29,14 +31,23 @@ public class SensorEventStreamProcessor {
         KStream<String, String> rawStream = streamsBuilder.stream(inputTopic);
 
         KStream<String, String> processedStream = rawStream
-                .peek((key, value) -> log.info("Received event for patient: {}", key))
-                .mapValues(processingService::process)
-                .filterNot((key, value) -> value.isEmpty())
-                .mapValues(opt -> opt.orElse(null))
-                .peek((key, value) -> log.info("Processed event for patient: {}", key));
+                .peek((key, value) -> log.debug("Received event for patient {} -> {}", key, value))
+                .flatMapValues(value -> safelyProcessEvent(value))
+                .peek((key, value) -> log.debug("Processed event for patient {} -> {}", key, value));
 
         processedStream.to(outputTopic);
         return processedStream;
+    }
+
+    private Iterable<String> safelyProcessEvent(String value) {
+        try {
+            return processingService.process(value)
+                    .map(Collections::singletonList)
+                    .orElseGet(Collections::emptyList);
+        } catch (Exception e) {
+            log.error("Unhandled error while processing event payload: {}", value, e);
+            return Collections.emptyList();
+        }
     }
 
 }

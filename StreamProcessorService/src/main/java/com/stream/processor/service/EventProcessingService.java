@@ -42,8 +42,11 @@ public class EventProcessingService {
             String result = serializer.serialize(processed) ;
             log.debug("Successfully processed event: {}", event.getMessageId());
             return Optional.of(result);
-        }catch (SerializationException e){
+        } catch (SerializationException e){
             log.error("Serialization error: {}", e.getMessage(), e);
+            return Optional.empty();
+        } catch (Exception e) {
+            log.error("Processing error for payload: {}", jsonEvent, e);
             return Optional.empty();
         }
     }

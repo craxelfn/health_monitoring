@@ -1,5 +1,6 @@
 package com.stream.processor.Model;
 
+import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
 import com.fasterxml.jackson.annotation.JsonProperty;
 import lombok.*;
 
@@ -9,6 +10,7 @@ import lombok.*;
 @NoArgsConstructor
 @AllArgsConstructor
 @EqualsAndHashCode(of = {"messageId", "patientId"})
+@JsonIgnoreProperties(ignoreUnknown = true)
 public class SensorEvent {
 
     @JsonProperty("message_id")

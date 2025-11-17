@@ -31,6 +31,11 @@ services:
       KAFKA_AUTO_CREATE_TOPICS_ENABLE: 'true'
     networks:
       - kafka-network
+    healthcheck:
+      test: ["CMD", "cub", "kafka-ready", "-b", "localhost:9092", "1", "30"]
+      interval: 10s
+      timeout: 5s
+      retries: 20
       
   kafka-init:
     image: confluentinc/cp-kafka:7.5.0
@@ -76,8 +81,10 @@ services:
       dockerfile: Dockerfile
     container_name: sensor-simulator
     depends_on:
-      - kafka
-      - kafka-init
+      kafka:
+        condition: service_healthy
+      kafka-init:
+        condition: service_started
     environment:
       KAFKA_BOOTSTRAP_SERVERS: kafka:9092
       CSV_FILE: /data/human_vital_signs_dataset_2024.csv
@@ -92,8 +99,10 @@ services:
       dockerfile: Dockerfile
     container_name: stream-processor
     depends_on:
-      - kafka
-      - kafka-init
+      kafka:
+        condition: service_healthy
+      kafka-init:
+        condition: service_started
     environment:
       SPRING_KAFKA_BOOTSTRAP_SERVERS: kafka:9092
       SPRING_KAFKA_STREAMS_APPLICATION_ID: health-stream-processor
