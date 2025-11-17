@@ -8,7 +8,7 @@ services:
       ZOOKEEPER_CLIENT_PORT: 2181
       ZOOKEEPER_TICK_TIME: 2000
     ports:
-      - "2181:2181"
+      - "12181:2181"
     networks:
       - kafka-network
       
@@ -95,7 +95,7 @@ services:
 
   stream-processor:
     build:
-      context: ./StreamProcessorService
+      context: .
       dockerfile: Dockerfile
     container_name: stream-processor
     depends_on:
@@ -104,10 +104,9 @@ services:
       kafka-init:
         condition: service_started
     environment:
-      SPRING_KAFKA_BOOTSTRAP_SERVERS: kafka:9092
-      SPRING_KAFKA_STREAMS_APPLICATION_ID: health-stream-processor
-    ports:
-      - "18081:8080"
+      KAFKA_BOOTSTRAP_SERVERS: kafka:9092
+      KAFKA_INPUT_TOPIC: sensor_raw
+      KAFKA_OUTPUT_TOPIC: processed_data
     networks:
       - kafka-network
       
