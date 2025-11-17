@@ -66,7 +66,7 @@ def map_csv_to_service_format(row: pd.Series, patient: Dict) -> Dict:
     
     Added fields:
     - message_id (UUID for deduplication)
-    - respiratory_rate (estimated from heart rate)
+    - respiratory_rate (sourced from CSV column)
     - activity_level (derived from heart rate)
     """
     
@@ -84,7 +84,11 @@ def map_csv_to_service_format(row: pd.Series, patient: Dict) -> Dict:
     
     heart_rate = float(row.get("Heart Rate", 75.0))
     
-    respiratory_rate = int(heart_rate / 4.5)
+    csv_respiratory_rate = row.get("Respiratory Rate", 16)
+    try:
+        respiratory_rate = int(float(csv_respiratory_rate))
+    except (TypeError, ValueError):
+        respiratory_rate = int(heart_rate / 4.5)
     
     if heart_rate < 60:
         activity_level = "resting"
