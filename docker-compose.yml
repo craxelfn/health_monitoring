@@ -8,7 +8,7 @@ services:
       ZOOKEEPER_CLIENT_PORT: 2181
       ZOOKEEPER_TICK_TIME: 2000
     ports:
-      - "12181:2181"
+      - "13181:2181"
     networks:
       - kafka-network
       
@@ -109,7 +109,37 @@ services:
       KAFKA_OUTPUT_TOPIC: processed_data
     networks:
       - kafka-network
+
+  ai-anomaly-detection:
+    build:
+      context: ./ai_anomaly_detection
+      dockerfile: Dockerfile
+    container_name: ai-anomaly-detection
+    depends_on:
+      kafka:
+        condition: service_healthy
+      kafka-init:
+        condition: service_started
+      stream-processor:
+        condition: service_started
+    environment:
+      KAFKA_BOOTSTRAP_SERVERS: kafka:9092
+      KAFKA_INPUT_TOPIC: processed_data
+      KAFKA_OUTPUT_TOPIC: anomaly_alert
+      ML_MODEL_ENDPOINT: ${ML_MODEL_ENDPOINT:-http://ml-model:8080/predict}
+      S3_BUCKET: ${S3_BUCKET:-health-monitoring-inferences}
+      BATCH_SIZE: ${BATCH_SIZE:-5}
+      BATCH_TIMEOUT_SECONDS: ${BATCH_TIMEOUT_SECONDS:-3}
+      AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID:-}
+      AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY:-}
+    volumes:
+      - anomaly-batch-data:/tmp/anomaly_batch_db
+    networks:
+      - kafka-network
       
+volumes:
+  anomaly-batch-data:
+
 networks:
   kafka-network:
     driver: bridge

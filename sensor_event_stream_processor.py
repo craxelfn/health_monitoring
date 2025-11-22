@@ -7,6 +7,7 @@ Processes sensor events from Kafka, validates, normalizes, enriches, and publish
 import json
 import logging
 import os
+import uuid
 from datetime import datetime
 from typing import Optional, Dict, Any, List
 from confluent_kafka import Consumer, Producer
@@ -44,7 +45,8 @@ class RequiredFieldsValidator:
     """Validates required fields are present"""
     
     def validate(self, event: Dict[str, Any]) -> ValidationResult:
-        if not event.get('patient_id'):
+        patient_id = event.get('patient_id')
+        if patient_id is None or patient_id == '':
             return ValidationResult.invalid_result("Patient ID is required")
         if not event.get('message_id'):
             return ValidationResult.invalid_result("Message ID is required")
@@ -104,6 +106,93 @@ class CompositeValidator:
         for validator in self.validators:
             result = result.combine(validator.validate(event))
         return result
+
+
+class FieldNameNormalizationStrategy:
+    """Normalizes field names from CSV format to snake_case"""
+    
+    FIELD_MAPPING = {
+        'Patient ID': 'patient_id',
+        'patient_id': 'patient_id',  # Already correct
+        'Age': 'age',
+        'Gender_Male': 'gender_male',
+        'Weight (kg)': 'weight_kg',
+        'Height (m)': 'height_m',
+        'Heart Rate': 'heart_rate',
+        'Body Temperature': 'temperature',
+        'Oxygen Saturation': 'oxygen_saturation',
+        'Systolic Blood Pressure': 'blood_pressure_systolic',
+        'Diastolic Blood Pressure': 'blood_pressure_diastolic',
+        'Derived_HRV': 'hrv',
+        'Derived_Pulse_Pressure': 'pulse_pressure',
+        'Derived_BMI': 'bmi',
+        'Derived_MAP': 'map',
+        'Timestamp': 'timestamp',
+        'timestamp': 'timestamp',  # Already correct
+        'message_id': 'message_id',
+        'Message ID': 'message_id',
+    }
+    
+    def normalize(self, event: Dict[str, Any]) -> Dict[str, Any]:
+        """Convert field names from CSV format to snake_case"""
+        normalized = {}
+        for key, value in event.items():
+            # Map to snake_case if mapping exists, otherwise keep original
+            new_key = self.FIELD_MAPPING.get(key, key.lower().replace(' ', '_').replace('(', '').replace(')', ''))
+            normalized[new_key] = value
+        
+        # Ensure patient_id is properly extracted (handle both "Patient ID" and "patient_id")
+        patient_id = normalized.get('patient_id')
+        if patient_id is None or patient_id == '':
+            # Try to get from original event's "Patient ID" field
+            if 'Patient ID' in event:
+                patient_id = event['Patient ID']
+            # Also try lowercase version
+            elif 'patient id' in event:
+                patient_id = event['patient id']
+        
+        # Always ensure patient_id is set and is a string
+        if patient_id is not None and patient_id != '':
+            normalized['patient_id'] = str(patient_id)
+        
+        # Ensure message_id exists (generate if missing)
+        if 'message_id' not in normalized or normalized['message_id'] is None:
+            normalized['message_id'] = str(uuid.uuid4())
+        
+        # Normalize timestamp if needed
+        timestamp = normalized.get('timestamp')
+        if timestamp:
+            normalized['timestamp'] = self._normalize_timestamp(timestamp)
+        
+        logger.debug(f"Normalized event: patient_id={normalized.get('patient_id')}, message_id={normalized.get('message_id')}")
+        return normalized
+    
+    def _normalize_timestamp(self, timestamp: Any) -> str:
+        """Normalize timestamp to ISO format"""
+        if timestamp is None:
+            return datetime.now().isoformat()
+        
+        if isinstance(timestamp, str):
+            if 'T' in timestamp:
+                return timestamp
+            try:
+                # Try parsing as datetime string
+                dt = datetime.strptime(timestamp, '%Y-%m-%d %H:%M:%S.%f')
+                return dt.isoformat()
+            except (ValueError, TypeError):
+                try:
+                    dt = datetime.strptime(timestamp, '%Y-%m-%d %H:%M:%S')
+                    return dt.isoformat()
+                except (ValueError, TypeError):
+                    pass
+        
+        try:
+            epoch_ms = int(timestamp)
+            dt = datetime.fromtimestamp(epoch_ms / 1000.0)
+            return dt.isoformat()
+        except (ValueError, TypeError):
+            logger.warning(f"Could not parse timestamp: {timestamp}")
+            return datetime.now().isoformat()
 
 
 class TimestampNormalizationStrategy:
@@ -188,7 +277,8 @@ class EventProcessingService:
             RequiredFieldsValidator(),
             VitalSignsRangeValidator()
         ])
-        self.normalizer = TimestampNormalizationStrategy()
+        self.field_normalizer = FieldNameNormalizationStrategy()
+        self.timestamp_normalizer = TimestampNormalizationStrategy()
         self.enricher = CompositeEnrichmentStrategy([
             HrvEnrichmentStrategy(),
             ActivityLevelEnrichmentStrategy(),
@@ -199,6 +289,10 @@ class EventProcessingService:
         try:
             event = json.loads(json_event)
             
+            # First normalize field names from CSV format to snake_case
+            event = self.field_normalizer.normalize(event)
+            
+            # Then validate
             validation_result = self.validator.validate(event)
             if not validation_result.valid:
                 logger.warning(
@@ -207,10 +301,11 @@ class EventProcessingService:
                 )
                 return None
             
-            processed = self.enricher.enrich(self.normalizer.normalize(event))
+            # Normalize timestamp and enrich
+            processed = self.enricher.enrich(self.timestamp_normalizer.normalize(event))
             
             result = json.dumps(processed)
-            logger.debug(f"Successfully processed event: {event.get('message_id')}")
+            logger.debug(f"Successfully processed event: {processed.get('message_id')} for patient {processed.get('patient_id')}")
             return result
         except json.JSONDecodeError as e:
             logger.error(f"Serialization error: {e}")
