@@ -5,7 +5,7 @@ WORKDIR /app
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-COPY ai_anomaly_detection_service.py .
+COPY . .
 
-CMD ["python", "ai_anomaly_detection_service.py"]
+CMD ["python", "anomaly_analyzer_service.py"]
 

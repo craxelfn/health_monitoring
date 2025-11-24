@@ -5,7 +5,7 @@ WORKDIR /app
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-COPY sensor_event_stream_processor.py .
+COPY . .
 
-CMD ["python", "sensor_event_stream_processor.py"]
+CMD ["python", "ml_inference_service.py"]
 

@@ -52,8 +52,11 @@ services:
       # Create topics
       echo 'Creating topics...'
       kafka-topics --create --if-not-exists --topic sensor_raw --bootstrap-server kafka:9092 --replication-factor 1 --partitions 4
-      kafka-topics --create --if-not-exists --topic processed_data --bootstrap-server kafka:9092 --replication-factor 1 --partitions 4
+      kafka-topics --create --if-not-exists --topic validated_data --bootstrap-server kafka:9092 --replication-factor 1 --partitions 4
+      kafka-topics --create --if-not-exists --topic inference_request --bootstrap-server kafka:9092 --replication-factor 1 --partitions 4
+      kafka-topics --create --if-not-exists --topic inference_result --bootstrap-server kafka:9092 --replication-factor 1 --partitions 4
       kafka-topics --create --if-not-exists --topic anomaly_alert --bootstrap-server kafka:9092 --replication-factor 1 --partitions 4
+      kafka-topics --create --if-not-exists --topic storage_event --bootstrap-server kafka:9092 --replication-factor 1 --partitions 4
       
       echo 'Topics created successfully!'
       "
@@ -93,11 +96,11 @@ services:
     networks:
       - kafka-network
 
-  stream-processor:
+  validation-service:
     build:
-      context: .
+      context: ./validation_service
       dockerfile: Dockerfile
-    container_name: stream-processor
+    container_name: validation-service
     depends_on:
       kafka:
         condition: service_healthy
@@ -106,40 +109,71 @@ services:
     environment:
       KAFKA_BOOTSTRAP_SERVERS: kafka:9092
       KAFKA_INPUT_TOPIC: sensor_raw
-      KAFKA_OUTPUT_TOPIC: processed_data
+      KAFKA_OUTPUT_TOPIC: validated_data
     networks:
       - kafka-network
 
-  ai-anomaly-detection:
+  batching-service:
     build:
-      context: ./ai_anomaly_detection
+      context: ./batching_service
       dockerfile: Dockerfile
-    container_name: ai-anomaly-detection
+    container_name: batching-service
     depends_on:
       kafka:
         condition: service_healthy
       kafka-init:
         condition: service_started
-      stream-processor:
+      validation-service:
         condition: service_started
     environment:
       KAFKA_BOOTSTRAP_SERVERS: kafka:9092
-      KAFKA_INPUT_TOPIC: processed_data
-      KAFKA_OUTPUT_TOPIC: anomaly_alert
-      ML_MODEL_ENDPOINT: ${ML_MODEL_ENDPOINT:-http://ml-model:8080/predict}
-      S3_BUCKET: ${S3_BUCKET:-health-monitoring-inferences}
-      BATCH_SIZE: ${BATCH_SIZE:-5}
-      BATCH_TIMEOUT_SECONDS: ${BATCH_TIMEOUT_SECONDS:-3}
-      AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID:-}
-      AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY:-}
-    volumes:
-      - anomaly-batch-data:/tmp/anomaly_batch_db
+      KAFKA_INPUT_TOPIC: validated_data
+      KAFKA_OUTPUT_TOPIC: inference_request
+      BATCH_WINDOW_SECONDS: 3
+    networks:
+      - kafka-network
+
+  ml-inference-service:
+    build:
+      context: ./ml_inference_service
+      dockerfile: Dockerfile
+    container_name: ml-inference-service
+    depends_on:
+      kafka:
+        condition: service_healthy
+      kafka-init:
+        condition: service_started
+      batching-service:
+        condition: service_started
+    environment:
+      KAFKA_BOOTSTRAP_SERVERS: kafka:9092
+      KAFKA_INPUT_TOPIC: inference_request
+      KAFKA_OUTPUT_TOPIC: inference_result
+      ML_MODEL_PATH: ${ML_MODEL_PATH:-}
+    networks:
+      - kafka-network
+
+  anomaly-analyzer:
+    build:
+      context: ./anomaly_analyzer
+      dockerfile: Dockerfile
+    container_name: anomaly-analyzer
+    depends_on:
+      kafka:
+        condition: service_healthy
+      kafka-init:
+        condition: service_started
+      ml-inference-service:
+        condition: service_started
+    environment:
+      KAFKA_BOOTSTRAP_SERVERS: kafka:9092
+      KAFKA_INPUT_TOPIC: inference_result
+      KAFKA_ALERT_TOPIC: anomaly_alert
+      KAFKA_STORAGE_TOPIC: storage_event
+      CRITICAL_THRESHOLD: 0.7
     networks:
       - kafka-network
       
-volumes:
-  anomaly-batch-data:
-
 networks:
   kafka-network:
     driver: bridge
