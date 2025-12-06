@@ -173,7 +173,87 @@ services:
       CRITICAL_THRESHOLD: 0.7
     networks:
       - kafka-network
+
+  redis:
+    image: redis:7-alpine
+    container_name: redis
+    ports:
+      - "6379:6379"
+    command: redis-server --appendonly yes
+    volumes:
+      - redis-data:/data
+    networks:
+      - kafka-network
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+  alert-service:
+    build:
+      context: ./alert_service
+      dockerfile: Dockerfile
+    container_name: alert-service
+    depends_on:
+      kafka:
+        condition: service_healthy
+      kafka-init:
+        condition: service_started
+      redis:
+        condition: service_healthy
+      anomaly-analyzer:
+        condition: service_started
+    environment:
+      KAFKA_BOOTSTRAP_SERVERS: kafka:9092
+      KAFKA_INPUT_TOPIC: anomaly_alert
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+      DEDUPLICATION_TTL_SECONDS: 300
+      SMTP_HOST: ${SMTP_HOST:-}
+      SMTP_USER: ${SMTP_USER:-}
+      SMTP_PASSWORD: ${SMTP_PASSWORD:-}
+      EMAIL_FROM: ${EMAIL_FROM:-alerts@healthmonitoring.com}
+      EMAIL_TO: ${EMAIL_TO:-admin@healthmonitoring.com}
+    volumes:
+      - alert-logs:/var/log/alerts
+    networks:
+      - kafka-network
+
+  storage-writer-service:
+    build:
+      context: ./storage_writer_service
+      dockerfile: Dockerfile
+    container_name: storage-writer-service
+    depends_on:
+      kafka:
+        condition: service_healthy
+      kafka-init:
+        condition: service_started
+      anomaly-analyzer:
+        condition: service_started
+    environment:
+      KAFKA_BOOTSTRAP_SERVERS: kafka:9092
+      KAFKA_INPUT_TOPIC: storage_event
+      S3_BUCKET: ${S3_BUCKET:-health-monitoring-storage}
+      AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID:-}
+      AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY:-}
+      UPLOAD_TIME: ${UPLOAD_TIME:-00:00}
+      LOCAL_FILES_DIR: /tmp/storage_files
+      DELETE_AFTER_UPLOAD: ${DELETE_AFTER_UPLOAD:-true}
+      FILE_GENERATION_INTERVAL_MINUTES: ${FILE_GENERATION_INTERVAL_MINUTES:-3}
+    volumes:
+      - storage-buffer:/tmp/storage_buffer
+      - storage-files:/tmp/storage_files
+    networks:
+      - kafka-network
       
+volumes:
+  redis-data:
+  alert-logs:
+  storage-buffer:
+  storage-files:
+
 networks:
   kafka-network:
     driver: bridge
